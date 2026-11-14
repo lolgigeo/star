@@ -4,7 +4,7 @@
 
 > 项目背景、架构设计与决策记录见 [docs/PLAN.md](docs/PLAN.md)。
 
-- 博客地址：https://lolgigeo.github.io/star.github.io/
+- 博客地址：https://lolgigeo.github.io/star/
 - 本地预览：双击打开仓库根目录的 `preview.html`（离线可用，支持搜索）
 
 ## 目录结构

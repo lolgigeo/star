@@ -80,4 +80,4 @@ Disallow: /
 User-agent: ias-ai
 Disallow: /
 
-Sitemap: https://lolgigeo.github.io/star.github.io/index.xml
+Sitemap: https://lolgigeo.github.io/star/index.xml

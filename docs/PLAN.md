@@ -8,7 +8,7 @@
 把微信公众号「辰爸学育儿」（biz `MzIwMjM0NDM1Nw==`，文章标题统一带「十方上学记｜」前缀）的文章：
 
 1. 抓取为 **Markdown 文件存入本仓库**（按文章标题命名）——作为长期备份；
-2. 用 **Hugo + PaperMod** 主题发布为 GitHub Pages 博客（https://lolgigeo.github.io/star.github.io/ ）；
+2. 用 **Hugo + PaperMod** 主题发布为 GitHub Pages 博客（https://lolgigeo.github.io/star/ ）；
 3. 生成一个**本地单文件 HTML 预览页**，双击即可离线浏览全部 MD 文章；
 4. 之后**每日自动发现并同步新文章**（RSS 增量）。
 
@@ -24,7 +24,7 @@
 | 博客主题 | **Hugo + PaperMod**（vendored） | 与 lolgigeo 保持一致，构建快、CJK 友好 |
 | 本地预览 | **单文件 preview.html** | marked.js vendored 内嵌，双击 `file://` 即开、完全离线 |
 | 每日自动化 | **ZCode 定时自动化** | 每天 20:30、23:30 各跑一次 `./sync.sh`；无新文章时空跑零副作用 |
-| 仓库 | `lolgigeo/star.github.io` | 项目页，URL 为 `https://lolgigeo.github.io/star.github.io/`（非用户主页） |
+| 仓库 | `lolgigeo/star` | 项目页，URL 为 `https://lolgigeo.github.io/star/`（非用户主页；2026-11-14 由 `star.github.io` 改名而来） |
 
 ## 三、架构
 
@@ -48,15 +48,15 @@
                └──▶ git push ─▶ GitHub Actions（.github/workflows/hugo.yml）
                                     ▼
                           hugo --minify ─▶ GitHub Pages
-                          （https://lolgigeo.github.io/star.github.io/）
+                          （https://lolgigeo.github.io/star/）
 ```
 
 ## 四、关键实现细节
 
-- **子路径部署**：本站是项目页，部署在 `/star.github.io/` 子路径下。Hugo 的 `absURL`/`relURL` 对 `/` 开头的路径只拼主机名，因此：
+- **子路径部署**：本站是项目页，部署在 `/star/` 子路径下。Hugo 的 `absURL`/`relURL` 对 `/` 开头的路径只拼主机名，因此：
   - 封面 frontmatter **不带前导斜杠**（`images/...`）→ PaperMod `absURL` 拼出含子路径的完整 URL（含 og:image）；
   - 正文 MD 图片保留 `/images/...` 写法（与 preview.html 的改写约定一致），由 `layouts/_default/_markup/render-image.html` 渲染钩子改写为含子路径的 URL。
-  - 不用 `relativeURLs = true`：实测会把主题静态资源改写成双重路径（`./star.github.io/...`），且改不了模板里 absURL 的输出。
+  - 不用 `relativeURLs = true`：实测会把主题静态资源改写成双重路径（`./star/...`），且改不了模板里 absURL 的输出。
 - **风控检测**：页面含「环境异常 / 操作频繁」等标记即判定被拦；连续 5 篇被拦自动中止本轮，下次运行续抓。
 - **差量键**：微信文章 URL 的 `sn` 参数（唯一），退回 `mid+idx`。
 - **MD frontmatter**：`title / date / cover / params(source, original)`，正文尾部附「查看原文」链接；RSS 无摘要与阅读数，`description`/`readsAtExport` 留空。
