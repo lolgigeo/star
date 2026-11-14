@@ -1,0 +1,57 @@
+baseURL = "https://lolgigeo.github.io/star.github.io/"
+defaultContentLanguage = "zh"
+locale = "zh-CN"
+title = "十方上学记"
+theme = "PaperMod"
+
+enableRobotsTXT = false  # robots.txt 由 static/robots.txt 静态提供（全站禁抓）
+
+[pagination]
+  pagerSize = 20
+
+[permalinks]
+  posts = "/posts/:title/"
+
+[params]
+  env = "production"
+  author = "辰爸"
+  description = "十方的校园生活记录 —— 公众号「辰爸学育儿」备份博客"
+  defaultTheme = "auto"
+  ShowReadingTime = false
+  ShowShareButtons = false
+  ShowPostNavLinks = true
+  ShowBreadCrumbsNavigation = false
+  ShowCodeCopyButtons = false
+  ShowToc = true
+  TocOpen = false
+
+  [params.homeInfoParams]
+    Title = "十方上学记"
+    Content = "记录十方的校园与生活点滴。内容首发于微信公众号「辰爸学育儿」，本站为自动同步的备份。"
+
+  [params.assets]
+    favicon = "favicon.ico"
+    favicon16x16 = "favicon-16x16.png"
+    favicon32x32 = "favicon-32x32.png"
+    apple_touch_icon = "apple-touch-icon.png"
+
+[outputs]
+  home = ["HTML", "RSS"]
+
+[markup]
+  [markup.goldmark.renderer]
+    unsafe = true
+  [markup.highlight]
+    noClasses = false
+
+[menu]
+  [[menu.main]]
+    identifier = "archives"
+    name = "归档"
+    url = "/archives/"
+    weight = 10
+  [[menu.main]]
+    identifier = "about"
+    name = "关于"
+    url = "/about/"
+    weight = 20

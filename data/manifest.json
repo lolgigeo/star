@@ -1,0 +1,44 @@
+{
+ "version": 1,
+ "articles": {
+  "sn:9056eabb455248d6399dd51f677c6c33": {
+   "title": "十方上学记｜我们班有人被写了两个脏字，刘老师没查，讲了个故事",
+   "url": "https://mp.weixin.qq.com/s?__biz=MzIwMjM0NDM1Nw==&mid=2247484448&idx=1&sn=9056eabb455248d6399dd51f677c6c33&chksm=97b3df80f5eb878125f8f00efbb2489614abfbf88ebf77a7dd0894cfe0ea43a698d93ed28de8",
+   "publishedAt": "2026-11-12T17:52:16+08:00",
+   "status": "ok",
+   "error": null,
+   "file": "content/posts/十方上学记｜我们班有人被写了两个脏字，刘老师没查，讲了个故事.md",
+   "images": [
+    "/images/2026-11/df5656286932c4ec.jpg"
+   ],
+   "cover": "/images/2026-11/df5656286932c4ec.jpg",
+   "syncedAt": "2026-11-14T21:22:54+08:00"
+  },
+  "sn:1efff0c06adff92fcae3160c8fe782c9": {
+   "title": "十方上学记｜武术课上到一半，校长喊我们去菜园吃烤红薯",
+   "url": "https://mp.weixin.qq.com/s?__biz=MzIwMjM0NDM1Nw==&mid=2247484453&idx=1&sn=1efff0c06adff92fcae3160c8fe782c9&chksm=9793220d0344b4b38ba2d38e8a789702dd0457cd0947d7ded25192dfe7da3f861146aed64372",
+   "publishedAt": "2026-11-13T07:22:59+08:00",
+   "status": "ok",
+   "error": null,
+   "file": "content/posts/十方上学记｜武术课上到一半，校长喊我们去菜园吃烤红薯.md",
+   "images": [
+    "/images/2026-11/c883848e800f6512.jpg"
+   ],
+   "cover": "/images/2026-11/c883848e800f6512.jpg",
+   "syncedAt": "2026-11-14T21:23:01+08:00"
+  },
+  "sn:7802629997d9bc805b16613d9e8452ca": {
+   "title": "十方上学记｜午睡时间，我们宿舍把被子玩出了花",
+   "url": "https://mp.weixin.qq.com/s?__biz=MzIwMjM0NDM1Nw==&mid=2247484457&idx=1&sn=7802629997d9bc805b16613d9e8452ca&chksm=97b3b5905a262f120bca9538a33c5e60f0f5fb2f138173a74c2d2fa5a1b3a604d98927de4b3b",
+   "publishedAt": "2026-11-14T18:48:00+08:00",
+   "status": "ok",
+   "error": null,
+   "file": "content/posts/十方上学记｜午睡时间，我们宿舍把被子玩出了花.md",
+   "images": [
+    "/images/2026-11/f3facb0d75073bdc.jpg"
+   ],
+   "cover": "/images/2026-11/f3facb0d75073bdc.jpg",
+   "syncedAt": "2026-11-14T21:23:08+08:00"
+  }
+ }
+}

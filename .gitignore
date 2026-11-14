@@ -1,0 +1,8 @@
+.venv/
+public/
+resources/
+logs/
+.DS_Store
+hugo_stats.json
+*.pyc
+__pycache__/
