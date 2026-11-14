@@ -5,6 +5,10 @@ title = "十方上学记"
 theme = "PaperMod"
 
 enableRobotsTXT = false  # robots.txt 由 static/robots.txt 静态提供（全站禁抓）
+# 注意：本站部署在 /star.github.io/ 子路径（项目页）。图片 URL 处理：
+#   · 封面 frontmatter 不带前导斜杠（images/...）-> PaperMod absURL 拼出含子路径的完整 URL
+#   · 正文 MD 图片带前导斜杠 -> layouts/_default/_markup/render-image.html 改写
+#     （absURL/relURL 对 / 开头路径只拼主机名，故正文需经 render hook）
 
 [pagination]
   pagerSize = 20

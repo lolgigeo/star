@@ -267,7 +267,8 @@ def build_frontmatter(meta: dict, cover_local: str | None) -> str:
         lines.append(f"description: {json.dumps(digest, ensure_ascii=False)}")
     if cover_local:
         lines.append("cover:")
-        lines.append(f"  image: {json.dumps(cover_local, ensure_ascii=False)}")
+        # 去掉前导 /：absURL 对 / 开头路径只拼主机名，会丢掉 Pages 子路径
+        lines.append(f"  image: {json.dumps(cover_local.lstrip('/'), ensure_ascii=False)}")
         lines.append("  relative: false")
     params = {
         "source": normalize_url(meta["url"]),

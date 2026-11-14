@@ -1,0 +1,10 @@
+{{- /*
+  Markdown 正文图片渲染钩子：站内绝对路径 /images/... 改写为含 Pages 子路径的 URL。
+  本站部署在 https://lolgigeo.github.io/star.github.io/（项目页），absURL/relURL
+  对 / 开头的路径只拼主机名，故先去掉前导斜杠再经 relURL 拼上子路径。
+*/ -}}
+{{- $src := .Destination -}}
+{{- if strings.HasPrefix $src "/" -}}
+  {{- $src = strings.TrimPrefix "/" $src | relURL -}}
+{{- end -}}
+<img src="{{ $src }}" alt="{{ .PlainText }}"{{ with .Title }} title="{{ . }}"{{ end }} loading="lazy">
