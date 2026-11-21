@@ -122,13 +122,13 @@
   "url:https://feed.zoro.build/plan": {
    "title": "套餐已到期，订阅已暂停更新",
    "url": "https://feed.zoro.build/plan",
-   "publishedAt": "2026-11-21T21:30:29+08:00",
+   "publishedAt": "2026-11-21T21:30:51+08:00",
    "status": "error",
    "error": "fetch status=error",
    "file": null,
    "images": [],
    "cover": null,
-   "syncedAt": "2026-11-21T21:30:30+08:00"
+   "syncedAt": "2026-11-21T21:30:53+08:00"
   }
  }
 }
