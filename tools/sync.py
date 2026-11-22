@@ -3,16 +3,17 @@
 
 数据源：
   - exports/*.json（含仓库根目录的历史导出文件，若有）：全量文章清单
-  - feed.zoro.build RSS 订阅：增量发现新文章
+  - 公众号后台接口（credentials/mp_credentials.json）：增量发现新文章
+  - feed.zoro.build RSS 订阅：备用增量源（取阅套餐到期后已停更，保留以防续费）
 
 流程：合并候选 -> 与 data/manifest.json 差量 -> 逐篇抓取转 MD（限速）->
 更新清单 -> 重建 preview.html -> git 提交推送。
 
 用法：
-  .venv/bin/python tools/sync.py                  # 增量同步（默认 json+rss）
+  .venv/bin/python tools/sync.py                  # 增量同步（默认 json+mp+rss）
   .venv/bin/python tools/sync.py --limit 5        # 只抓 5 篇（测试）
   .venv/bin/python tools/sync.py --no-push        # 不同步到 GitHub
-  .venv/bin/python tools/sync.py --source rss     # 只查 RSS
+  .venv/bin/python tools/sync.py --source mp      # 只查公众号后台
 """
 
 from __future__ import annotations
@@ -28,8 +29,12 @@ import sys
 import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import feedparser
+import requests
+
+import mp_list
 
 from wechat_fetch import (
     ImageStore,
@@ -51,6 +56,8 @@ RSS_URL = "https://feed.zoro.build/feed/yuSlDu_T4JTBt-shZlfl9-sOWmXdWzmr/a/2727.
 
 CONSECUTIVE_BLOCK_LIMIT = 5   # 连续被风控 N 篇则中止本轮
 ARTICLE_DELAY = (3.0, 6.0)    # 每篇文章之间随机间隔秒数
+# 凭据文件与 lolgigeo 共享，里面配了多个号；MP 源只收本仓库对应的号，防止串号污染
+MP_ACCOUNT = "辰爸学育儿"
 
 log = logging.getLogger("sync")
 
@@ -100,8 +107,12 @@ def candidates_from_json(manifest: dict) -> dict[str, dict]:
 
 
 def candidates_from_rss() -> dict[str, dict]:
-    """从 RSS 订阅源收集候选。"""
+    """从 RSS 订阅源收集候选（解析失败自动重试一次，防止瞬时故障漏文章）。"""
     feed = feedparser.parse(RSS_URL)
+    if feed.bozo and not feed.entries:
+        log.warning("RSS 解析失败（%s），5 秒后重试一次", feed.bozo_exception)
+        time.sleep(5)
+        feed = feedparser.parse(RSS_URL)
     if feed.bozo and not feed.entries:
         log.warning("RSS 解析失败：%s", feed.bozo_exception)
         return {}
@@ -110,6 +121,10 @@ def candidates_from_rss() -> dict[str, dict]:
         link = getattr(entry, "link", "")
         title = getattr(entry, "title", "")
         if not link or not title:
+            continue
+        if "mp.weixin.qq.com" not in link:
+            # RSS 服务自身的提示条目（如 feed.zoro.build 套餐到期通知）不是文章，跳过
+            log.info("RSS 跳过非微信文章链接：%s（%s）", title, link)
             continue
         published = ""
         pub = getattr(entry, "published_parsed", None)
@@ -138,8 +153,122 @@ def candidates_from_rss() -> dict[str, dict]:
     return found
 
 
+def resolve_short_link(url: str) -> str:
+    """/s/ 短链解析成带 sn 的规范链接（appmsgpublish 返回的就是短链）。
+
+    解析失败时原样返回——article_key 会退回用整条 URL 当键，
+    代价是可能与已按 sn 存档的同一篇文章重复，所以这里尽力而为。
+    """
+    parsed = urlparse(url)
+    if parsed.path.startswith("/s/") and not parsed.query:
+        try:
+            resp = requests.get(url, headers={"User-Agent": mp_list.UA},
+                                timeout=30, allow_redirects=True)
+        except requests.RequestException as exc:
+            log.warning("短链解析请求失败（%s）：%s", url, exc)
+            return url
+        final = resp.url
+        if parse_qs(urlparse(final).query).get("sn"):
+            return final
+        # 没有HTTP跳转时，正文页里通常有规范链接（msg_link 变量，HTML 转义过）
+        m = re.search(
+            r"https://mp\.weixin\.qq\.com/s\?__biz=[^\"'&]+&mid=\d+&idx=\d+&sn=[0-9a-f]{16,40}",
+            html.unescape(resp.text[:30000]))
+        if m:
+            return m.group(0)
+        log.warning("短链未解析出 sn，按原链接处理：%s", url)
+    return url
+
+
+def mid_idx_key(url: str) -> str | None:
+    """从链接提取 mid+idx 次级键（与 article_key 的回退格式一致）。"""
+    q = parse_qs(urlparse(url).query)
+    mid = (q.get("mid") or [""])[0]
+    idx = (q.get("idx") or [""])[0]
+    return f"mid:{mid}:{idx}" if mid and idx else None
+
+
+def reconcile_short_candidates(candidates: dict[str, dict], manifest: dict) -> None:
+    """把解析不出 sn 的 /s/ 短链候选按 mid+idx 对回既有 manifest 条目（原地修改）。
+
+    appmsgpublish 返回的是 /s/ 短链，旧文章页面里取不到 sn；若不处理，
+    同一篇文章会以短链为键重复抓取、文件名变成 xxx-2.md。
+    已存档（ok/deleted）的丢弃候选；历史失败条目则改用其规范 URL 重试。
+    本仓库走 list_ex（链接自带 sn），此函数主要作为兜底。
+    """
+    index: dict[str, str] = {}
+    for key, entry in manifest["articles"].items():
+        mk = mid_idx_key(entry.get("url") or "")
+        if mk:
+            index.setdefault(mk, key)
+    for ckey in [k for k in candidates if k not in manifest["articles"]]:
+        cand = candidates[ckey]
+        mid, idx = cand.get("_mp_mid"), cand.get("_mp_idx")
+        mk = f"mid:{mid}:{idx}" if mid else mid_idx_key(cand.get("url") or "")
+        existing = index.get(mk) if mk else None
+        if not existing:
+            continue
+        entry = manifest["articles"][existing]
+        if entry.get("status") in ("ok", "deleted"):
+            del candidates[ckey]
+        else:
+            meta = dict(cand)
+            meta["url"] = entry.get("url") or meta["url"]
+            candidates[existing] = meta
+            del candidates[ckey]
+
+
+def candidates_from_mp() -> dict[str, dict]:
+    """从公众号后台接口收集候选（凭据缺失或登录态过期时跳过，不中断同步）。"""
+    try:
+        rows = mp_list.fetch_all()
+    except mp_list.MpError as exc:
+        log.warning("MP 数据源跳过：%s", exc)
+        return {}
+    found: dict[str, dict] = {}
+    for name, item in rows:
+        if name != MP_ACCOUNT:
+            # 共享凭据里还配了其他仓库的号，只收本仓库的，防止串号污染
+            continue
+        link = resolve_short_link(item.get("link") or "")
+        fetch_url = link
+        if "/s/" in urlparse(link).path and item.get("appmsgid"):
+            # 短链解析不出 sn：键与存档改用 biz+mid+idx 规范形态（mid:idx，稳定，
+            # 未来其他来源的 sn 键候选也能被 reconcile_short_candidates 对齐）；
+            # 抓取仍用短链——微信正文页不认不带 sn 的参数链接
+            link = (f"https://mp.weixin.qq.com/s?__biz={item.get('biz') or ''}"
+                    f"&mid={item['appmsgid']}&idx={item.get('itemidx') or 1}")
+            fetch_url = item.get("link") or link
+        title = (item.get("title") or "").strip()
+        if not link or not title or "mp.weixin.qq.com" not in link:
+            # 多条推送里可能混有视频号等无链接条目，不是文章
+            log.info("MP 跳过非文章条目（%s）：%s", name, title or link[:80])
+            continue
+        create_time = int(item.get("create_time") or 0)
+        published = datetime.fromtimestamp(create_time, tz=TZ_CN).isoformat(
+            timespec="seconds") if create_time else ""
+        found[article_key(link)] = {
+            "title": html.unescape(title),
+            "url": fetch_url,
+            "canonicalUrl": link if fetch_url != link else None,
+            "publishedAt": published,
+            "publishedAtUnix": None,
+            "coverUrl": item.get("cover") or item.get("cover_url") or None,
+            "digest": (item.get("digest") or "").strip() or None,
+            "original": True,
+            "reads": None,
+            "likes": None,
+            "textOnly": False,
+            "_from": "mp",
+            "_mp_mid": item.get("appmsgid"),
+            "_mp_idx": item.get("itemidx"),
+        }
+    log.info("MP 返回 %d 条候选", len(found))
+    return found
+
+
 def merge_candidates(*sources: dict[str, dict]) -> dict[str, dict]:
-    """合并候选；RSS 补充 JSON 没有的新文章，但不覆盖 JSON 的富字段。"""
+    """合并候选；MP/RSS 补充 JSON 没有的新文章，但不覆盖 JSON 的富字段。"""
     merged: dict[str, dict] = {}
     for src in sources:
         for key, cand in src.items():
@@ -179,16 +308,15 @@ def month_of(meta: dict) -> str:
     return datetime.now(TZ_CN).strftime("%Y-%m")
 
 
-def sync_article(meta: dict, fetcher: WeChatFetcher, images: ImageStore,
+def sync_article(meta: dict, key: str, fetcher: WeChatFetcher, images: ImageStore,
                  manifest: dict, used: set[str]) -> dict:
-    """抓取单篇并写 MD。返回 manifest 条目。"""
-    key = article_key(meta["url"])
+    """抓取单篇并写 MD。返回 manifest 条目。键由调用方提供（短链候选已按规范键归一）。"""
     month = month_of(meta)
     status, body, og_cover = fetcher.fetch_article(meta["url"], month)
 
     entry = {
         "title": meta["title"],
-        "url": normalize_url(meta["url"]),
+        "url": normalize_url(meta.get("canonicalUrl") or meta["url"]),
         "publishedAt": meta.get("publishedAt") or "",
         "status": status,
         "error": None,
@@ -268,7 +396,7 @@ def git_commit_push(new_count: int, first_title: str | None, do_push: bool) -> s
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="公众号文章同步")
-    parser.add_argument("--source", choices=["both", "json", "rss"], default="both")
+    parser.add_argument("--source", choices=["both", "json", "mp", "rss"], default="both")
     parser.add_argument("--limit", type=int, default=0, help="最多抓取篇数（0 不限）")
     parser.add_argument("--no-push", action="store_true", help="只提交不推送")
     parser.add_argument("--no-git", action="store_true", help="不提交不推送")
@@ -293,9 +421,12 @@ def main() -> int:
     sources = []
     if args.source in ("both", "json"):
         sources.append(candidates_from_json(manifest))
+    if args.source in ("both", "mp"):
+        sources.append(candidates_from_mp())
     if args.source in ("both", "rss"):
         sources.append(candidates_from_rss())
     candidates = merge_candidates(*sources)
+    reconcile_short_candidates(candidates, manifest)
     log.info("候选总数 %d，manifest 已有 %d 篇", len(candidates), len(manifest["articles"]))
 
     # 2. 差量：不在 manifest 或状态非 ok/deleted 的都重试
@@ -320,7 +451,7 @@ def main() -> int:
         meta = candidates[key]
         log.info("[%d/%d] 抓取：%s", i, len(todo_keys), meta["title"])
         try:
-            entry = sync_article(meta, fetcher, images, manifest, used)
+            entry = sync_article(meta, key, fetcher, images, manifest, used)
         except Exception as exc:  # 单篇异常不中断整体
             log.exception("抓取异常：%s", meta["title"])
             entry = {"title": meta["title"], "url": meta["url"], "status": "failed",

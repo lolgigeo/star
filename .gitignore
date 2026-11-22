@@ -1,3 +1,6 @@
+# 凭据（公众号后台登录态），绝不入库；本仓库是指向 ../lolgigeo/credentials 的符号链接，
+# git 把符号链接当文件看，所以不加尾部斜杠
+credentials
 .venv/
 public/
 resources/
