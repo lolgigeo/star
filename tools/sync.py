@@ -58,6 +58,9 @@ CONSECUTIVE_BLOCK_LIMIT = 5   # 连续被风控 N 篇则中止本轮
 ARTICLE_DELAY = (3.0, 6.0)    # 每篇文章之间随机间隔秒数
 # 凭据文件与 lolgigeo 共享，里面配了多个号；MP 源只收本仓库对应的号，防止串号污染
 MP_ACCOUNT = "辰爸学育儿"
+# 项目范围：不做历史回补。MP「已发表」列表一次能拉 20 条，会把项目启动（2026-11-14，
+# RSS 时代首篇 2026-11-12）之前的历史文章也带出来，按发布日期挡住
+MP_SOURCE_START = "2026-11-12"
 
 log = logging.getLogger("sync")
 
@@ -247,6 +250,9 @@ def candidates_from_mp() -> dict[str, dict]:
         create_time = int(item.get("create_time") or 0)
         published = datetime.fromtimestamp(create_time, tz=TZ_CN).isoformat(
             timespec="seconds") if create_time else ""
+        if published and published[:10] < MP_SOURCE_START:
+            log.info("MP 跳过范围外历史文章（早于 %s）：%s", MP_SOURCE_START, title)
+            continue
         found[article_key(link)] = {
             "title": html.unescape(title),
             "url": fetch_url,

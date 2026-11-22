@@ -35,9 +35,10 @@
 
 ## 新文章如何被发现
 
-- **公众号后台接口**（主要）：`tools/mp_list.py` 用登录态（`credentials/mp_credentials.json`，与姊妹项目 lolgigeo 共享同一份）调 `appmsg/list_ex` 按 fakeid 拉「辰爸学育儿」最新文章，按 `sn` 参数与 `data/manifest.json` 差量。凭据缺失或登录态过期时自动跳过，不中断同步。移植步骤见 lolgigeo 仓库的《MP数据源移植指南.md》。
+- **公众号后台接口**（主要）：`tools/mp_list.py` 用登录态（`credentials/mp_credentials.json`，与姊妹项目 lolgigeo 共享同一份，一个登录态管两个公众号）调 `appmsgpublish`（后台「已发表」列表）拉「辰爸学育儿」最新文章，按 `sn`/`mid+idx` 与 `data/manifest.json` 差量。会话上下文不在本号时自动调 `switchacct` 切换并回存凭据；凭据缺失或登录态过期时自动跳过，不中断同步。移植步骤见 lolgigeo 仓库的《MP数据源移植指南.md》。
 - **RSS 订阅源**（备用）：feed.zoro.build 绑定本公众号生成的订阅。取阅套餐 2026-11-21 到期后已停更（返回「套餐已到期」提示条目，同步时自动过滤），保留以防续费恢复。
 - **手动导出 JSON**（兜底）：新的公众号历史文章导出 JSON 放进 `exports/` 即可，下次同步自动识别，用于补历史。
+- **范围**：不做历史回补，MP 源只同步 2026-11-12（RSS 时代首篇）之后发布的文章（`sync.py` 的 `MP_SOURCE_START`），「已发表」列表带出来的更早历史文章会被跳过。
 
 ## 抓取注意事项
 

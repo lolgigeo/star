@@ -19,8 +19,9 @@
 | 决策 | 选择 | 理由 |
 |---|---|---|
 | 抓取执行位置 | **必须本地**（家庭宽带） | 微信对数据中心 IP 有风控（「环境异常」验证页）；GitHub Actions 只负责 Hugo 构建部署 |
-| 新文章发现 | **公众号后台接口**（2026-11-22 起，`list_ex` 按 fakeid 拉「辰爸学育儿」） | 第三方 RSS（feed.zoro.build）套餐 2026-11-21 到期停更；改用号主登录态调微信后台接口做增量，凭据与 lolgigeo 共享一份。RSS 降为备用源（续费后自动恢复），`exports/` 兜底逻辑保留 |
-| MP 凭据与账号过滤 | **凭据文件共享**（符号链接 → `../lolgigeo/credentials`），**候选按账号过滤**（`MP_ACCOUNT`） | 登录态续期只改一处；但 `fetch_all()` 会拉凭据里所有账号，不按账号过滤会把对方的号文章抓进本仓库（串号污染） |
+| 新文章发现 | **公众号后台接口**（2026-11-22 起，`appmsgpublish` 已发表列表） | 第三方 RSS（feed.zoro.build）套餐 2026-11-21 到期停更；改用号主登录态调微信后台接口做增量，凭据与 lolgigeo 共享一份。RSS 降为备用源（续费后自动恢复），`exports/` 兜底逻辑保留 |
+| MP 凭据与账号过滤 | **凭据文件共享**（符号链接 → `../lolgigeo/credentials`），**候选按账号过滤**（`MP_ACCOUNT`） | 一个登录态管两个公众号：会话上下文绑在 cookie 的 `slave_bizuin` 上，抓取前自动 `switchacct` 切换到本号并回存凭据；`fetch_all()` 按号过滤（`name_filter`），候选层再过滤一次防串号污染 |
+| 历史范围 | **不做历史回补**（`MP_SOURCE_START = 2026-11-12`） | 「已发表」列表一次能拉 20 条，会把项目启动前的历史文章带出来；按发布日期挡住，只跟踪 RSS 时代之后的内容 |
 | 图片存储 | **下载到仓库** | 微信图床有防盗链和失效风险，本地化才是真备份；封面一律 `/0` 原图规格（1280px） |
 | 博客主题 | **Hugo + PaperMod**（vendored） | 与 lolgigeo 保持一致，构建快、CJK 友好 |
 | 本地预览 | **单文件 preview.html** | marked.js vendored 内嵌，双击 `file://` 即开、完全离线 |
@@ -78,8 +79,9 @@
 
 - GitHub Pages 需在仓库设置里开启（Settings → Pages → Source: **GitHub Actions**），本机无 `gh` CLI，走网页操作。
 - **MP 数据源要点**（2026-11-22 移植，完整指南见 lolgigeo 仓库《MP数据源移植指南.md》）：
-  - 本仓库走 `list_ex`（别人的号）通道：返回链接自带 `sn`，`article_key` 直接可用；appmsgpublish 短链坑（第四节）与本仓库无关。
-  - 凭据文件与 lolgigeo 共享（符号链接），`accounts` 里两个号各归各的仓库，`candidates_from_mp()` 按 `MP_ACCOUNT` 过滤防串号。
-  - `200013` 是账号级冷却（几十分钟~数小时自愈），期间日志告警跳过 MP 源，不中断整体流程；登录态失效类错误（`MpAuthError`）整体跳过 MP 源。
-- RSS 只保留最近几条：若自动化中断超过一天漏抓，把新导出的 JSON 放入 `exports/` 补同步（RSS 已停更，漏抓兜底现在主要靠 MP 接口能回看最新 5 条）。
+  - 本仓库与 lolgigeo 同走 `appmsgpublish`（已发表列表，无频控）：登录态实际管理两个公众号，抓取前按账号自动 `switchacct` 切换上下文（cookie 的 `slave_bizuin` 判断是否需要切），切换后 `GET /` 302 找回新 token 并回存凭据。
+  - `content_url` 是 `/s/` 短链且实测解析不出 `sn`：键与存档改用 biz+mid+idx 规范形态（`article_key` 回退成 `mid:idx`，稳定），抓取正文仍用短链；`reconcile_short_candidates` 按 mid+idx 把候选对回既有 sn 键条目防重复。
+  - 凭据文件与 lolgigeo 共享（符号链接），两边 `sync.py` 按 `MP_ACCOUNT` 过滤候选、`fetch_all(name_filter)` 按号拉取，防串号污染。
+  - 凭据缺失/登录态失效（`MpAuthError`）整体跳过 MP 源，绝不中断夜间定时同步。
+- RSS 只保留最近几条：若自动化中断超过一天漏抓，把新导出的 JSON 放入 `exports/` 补同步（RSS 已停更，漏抓兜底现在靠 MP 已发表列表回看最近 20 条）。
 - 抓取必须在本地执行（微信风控），不要把同步搬到 Actions 里跑。
