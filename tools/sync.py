@@ -221,7 +221,7 @@ def reconcile_short_candidates(candidates: dict[str, dict], manifest: dict) -> N
 def candidates_from_mp() -> dict[str, dict]:
     """从公众号后台接口收集候选（凭据缺失或登录态过期时跳过，不中断同步）。"""
     try:
-        rows = mp_list.fetch_all()
+        rows = mp_list.fetch_all(MP_ACCOUNT)
     except mp_list.MpError as exc:
         log.warning("MP 数据源跳过：%s", exc)
         return {}

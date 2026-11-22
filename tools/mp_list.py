@@ -8,12 +8,16 @@
 
 凭据文件 credentials/mp_credentials.json（已 gitignore，不入库）：
   {
-    "cookie": "<浏览器 DevTools 复制的完整 Cookie 请求头>",
+    "cookie": "<浏览器复制的完整 Cookie 请求头>",
     "token": "<登录后地址栏 token= 后面的数字>",
     "accounts": [
-      {"name": "文森和他的孩子们", "fakeid": "Mz..."}
+      {"name": "文森和他的孩子们", "fakeid": "Mz...", "own": true, "username": "gh_xxx"}
     ]
   }
+
+一份登录态可以管理多个公众号（accounts 配多条 own 记录）：会话上下文绑定在
+cookie 的 slave_bizuin 上，后台接口只返回当前号的列表；抓取前按账号自动调
+switchacct 切换并回存 cookie/token，多仓库共享同一份凭据时谁用谁切。
 
 登录态几天会过期，症状是所有请求 ret!=0；重新从浏览器复制覆盖
 cookie/token 两个字段即可（accounts 不用动）。
@@ -91,6 +95,109 @@ def save_credentials(cred: dict) -> None:
     CRED_PATH.write_text(json.dumps(cred, ensure_ascii=False, indent=2) + "\n")
 
 
+# ---------------- 一份登录态管多个号：切换上下文 ----------------
+# 登录态绑定在「当前公众号上下文」上（cookie 的 slave_bizuin），后台接口只返回
+# 当前号的已发表列表。一个微信管理多个公众号时，用 switchacct 接口切换上下文：
+# POST switchacct?action=switch（带目标号 username）→ 服务端换发 cookie →
+# GET / 302 找回新 token。多仓库共享同一份凭据文件时，谁用谁切，用完回存。
+
+def parse_cookie_header(header: str) -> dict[str, str]:
+    """把 Cookie 请求头解析成 {name: value}。"""
+    out: dict[str, str] = {}
+    for part in header.split(";"):
+        part = part.strip()
+        if part and "=" in part:
+            k, v = part.split("=", 1)
+            out[k.strip()] = v.strip()
+    return out
+
+
+def fakeid_to_bizuin(fakeid: str) -> str:
+    """fakeid 即 bizuin 数字的 base64（MzIwMjM0NDM1Nw== ↔ 3202344357）。"""
+    try:
+        return base64.b64decode(fakeid).decode()
+    except Exception:
+        return fakeid
+
+
+def cookie_bizuin(cookie: str) -> str | None:
+    """当前会话上下文对应的公众号 bizuin（cookie 的 slave_bizuin）。"""
+    m = re.search(r"slave_bizuin=(\d+)", cookie)
+    return m.group(1) if m else None
+
+
+def get_acct_list(cred: dict) -> list[dict]:
+    """列出本登录态可切换的公众号（biz_list.list 的元素可能是 JSON 字符串）。"""
+    data = api_get("switchacct", {"action": "get_acct_list"}, cred)
+    bl = data.get("biz_list") or {}
+    items = bl.get("list") if isinstance(bl, dict) else (bl or [])
+    out: list[dict] = []
+    for raw in items or []:
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except ValueError:
+                continue
+        if isinstance(raw, dict):
+            out.append(raw)
+    return out
+
+
+def refresh_token(cred: dict) -> None:
+    """切换后 token 随上下文变化：带 cookie GET / 会 302 到带 token= 的 home 地址。"""
+    resp = requests.get("https://mp.weixin.qq.com/",
+                        headers={"User-Agent": UA, "Cookie": cred["cookie"]},
+                        timeout=30, allow_redirects=False)
+    m = re.search(r"token=(\d+)", resp.headers.get("Location", "") or "")
+    if not m:
+        raise MpAuthError("切换账号后无法找回 token（GET / 未跳转到 home，登录态可能已失效）")
+    cred["token"] = m.group(1)
+
+
+def switch_account(cred: dict, acc: dict) -> dict:
+    """把会话上下文切到 acc 对应的公众号，更新并回存 cookie/token。"""
+    name = acc.get("name") or "?"
+    session = requests.Session()
+    session.cookies.update(parse_cookie_header(cred["cookie"]))
+    resp = session.post(
+        "https://mp.weixin.qq.com/cgi-bin/switchacct",
+        params={"action": "switch", "token": cred["token"], "lang": "zh_CN", "f": "json", "ajax": 1},
+        data={"username": acc["username"]},
+        headers={"User-Agent": UA,
+                 "Referer": "https://mp.weixin.qq.com/cgi-bin/frame?t=frame"},
+        timeout=30)
+    resp.raise_for_status()
+    ret = (resp.json().get("base_resp") or {}).get("ret")
+    if ret != 0:
+        msg = {201501: "未授权使用切换账号能力，请退出后重新扫码登录"}.get(ret, f"ret={ret}")
+        raise MpError(f"switchacct（{name}）：{msg}")
+    cred["cookie"] = "; ".join(f"{k}={v}" for k, v
+                               in requests.utils.dict_from_cookiejar(session.cookies).items())
+    refresh_token(cred)
+    save_credentials(cred)
+    log.info("MP 已切换到公众号「%s」（bizuin=%s）", name, cookie_bizuin(cred["cookie"]))
+    return cred
+
+
+def ensure_own_context(cred: dict, acc: dict) -> dict:
+    """own 账号抓取前确认会话上下文在自己号上，不在就切过去（多号共用一份凭据）。"""
+    target = fakeid_to_bizuin(acc.get("fakeid") or "")
+    if not target or cookie_bizuin(cred["cookie"]) == target:
+        return cred
+    name = acc.get("name") or "?"
+    username = acc.get("username")
+    if not username:
+        for b in get_acct_list(cred):
+            if b.get("nickname") == name and b.get("username"):
+                username = b["username"]
+                acc["username"] = username  # 记下来，下次不用再查
+                break
+    if not username:
+        raise MpError(f"无法确定「{name}」的切换 username（get_acct_list 无匹配昵称，"
+                      "可在凭据 accounts 里手填）")
+    return switch_account(cred, acc)
+
+
 # ---------------- 接口 ----------------
 
 def api_get(cgi: str, params: dict, cred: dict) -> dict:
@@ -154,8 +261,10 @@ def fetch_own(cred: dict, acc: dict) -> list[tuple[str, dict]]:
     相比 list_ex 的优势：无 fakeid 频控、最多可翻页。返回与 fetch_all 相同的
     [(名称, 条目)] 契约，条目归一化成 list_ex 风格字段；content_url 是 /s/ 短链，
     由 sync.py 侧解析成规范链接（解析不出 sn 时用 biz+mid+idx 兜底）。
+    一份登录态管多个号：抓取前先确认上下文在自己号上（不对则 switchacct 切换）。
     """
     name = acc.get("name") or "?"
+    cred = ensure_own_context(cred, acc)
     out: list[tuple[str, dict]] = []
     for begin in range(0, OWN_MAX_PAGES * OWN_PAGE_COUNT, OWN_PAGE_COUNT):
         data = api_get("appmsgpublish", {
@@ -192,11 +301,14 @@ def fetch_own(cred: dict, acc: dict) -> list[tuple[str, dict]]:
     return out
 
 
-def fetch_all() -> list[tuple[str, dict]]:
-    """拉取凭据里全部公众号的最新文章，返回 [(公众号名, 条目)]。
+def fetch_all(name_filter: str | None = None) -> list[tuple[str, dict]]:
+    """拉取凭据里公众号的最新文章，返回 [(公众号名, 条目)]。
 
     accounts 里标了 "own": true 的号走 appmsgpublish（自己号的发表记录，
-    不受 list_ex 频控）；其余走 list_ex。
+    不受 list_ex 频控）；其余走 list_ex。一份登录态管多个号时，own 账号抓取前
+    会自动 switchacct 切换上下文。
+    name_filter：只拉指定名称的号（多仓库共享凭据时各仓库传自己的号，
+    避免空拉别人的列表、也避免别的号失败连带中止本仓库的源）。
     登录态失效抛 MpAuthError（上层整体跳过 MP 源）；单个账号失败只告警继续。
     """
     cred = load_credentials()
@@ -208,6 +320,10 @@ def fetch_all() -> list[tuple[str, dict]]:
     for acc in accounts:
         if acc.get("own"):
             name = acc.get("name") or "?"
+            if name_filter and name != name_filter:
+                continue
+            if own_names:
+                time.sleep(ACCOUNT_DELAY)
             own_names.add(name)
             try:
                 out.extend(fetch_own(cred, acc))
@@ -219,6 +335,8 @@ def fetch_all() -> list[tuple[str, dict]]:
     for i, acc in enumerate(others):
         fakeid = acc.get("fakeid")
         name = acc.get("name") or fakeid or "?"
+        if name_filter and name != name_filter:
+            continue
         if not fakeid:
             log.warning("MP 账号缺少 fakeid，跳过：%s", name)
             continue
