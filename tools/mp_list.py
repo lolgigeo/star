@@ -54,6 +54,10 @@ ACCOUNT_DELAY = 1.5  # 多账号之间间隔，别贴着频控线
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
 
+# 微信后台请求一律本机直连：走系统/环境代理会改变出口 IP（微信风控敏感），且本地
+# 代理客户端（clash 等）时好时坏，2026-11-26 系统代理 503 曾把夜间同步整个炸穿
+NO_PROXY = {"http": None, "https": None}
+
 RET_MSG = {
     -100: "未登录或登录态已失效",
     200002: "登录态已失效",
@@ -145,9 +149,12 @@ def get_acct_list(cred: dict) -> list[dict]:
 
 def refresh_token(cred: dict) -> None:
     """切换后 token 随上下文变化：带 cookie GET / 会 302 到带 token= 的 home 地址。"""
-    resp = requests.get("https://mp.weixin.qq.com/",
-                        headers={"User-Agent": UA, "Cookie": cred["cookie"]},
-                        timeout=30, allow_redirects=False)
+    try:
+        resp = requests.get("https://mp.weixin.qq.com/",
+                            headers={"User-Agent": UA, "Cookie": cred["cookie"]},
+                            timeout=30, allow_redirects=False, proxies=NO_PROXY)
+    except requests.RequestException as exc:
+        raise MpError(f"找回 token 失败（本机直连 mp.weixin.qq.com 不通）：{exc}") from exc
     m = re.search(r"token=(\d+)", resp.headers.get("Location", "") or "")
     if not m:
         raise MpAuthError("切换账号后无法找回 token（GET / 未跳转到 home，登录态可能已失效）")
@@ -158,19 +165,25 @@ def switch_account(cred: dict, acc: dict) -> dict:
     """把会话上下文切到 acc 对应的公众号，更新并回存 cookie/token。"""
     name = acc.get("name") or "?"
     session = requests.Session()
+    session.trust_env = False  # 强制直连，绕过系统/环境代理
     session.cookies.update(parse_cookie_header(cred["cookie"]))
-    resp = session.post(
-        "https://mp.weixin.qq.com/cgi-bin/switchacct",
-        params={"action": "switch", "token": cred["token"], "lang": "zh_CN", "f": "json", "ajax": 1},
-        data={"username": acc["username"]},
-        headers={"User-Agent": UA,
-                 "Referer": "https://mp.weixin.qq.com/cgi-bin/frame?t=frame"},
-        timeout=30)
-    resp.raise_for_status()
-    ret = (resp.json().get("base_resp") or {}).get("ret")
+    try:
+        resp = session.post(
+            "https://mp.weixin.qq.com/cgi-bin/switchacct",
+            params={"action": "switch", "token": cred["token"], "lang": "zh_CN", "f": "json", "ajax": 1},
+            data={"username": acc["username"]},
+            headers={"User-Agent": UA,
+                     "Referer": "https://mp.weixin.qq.com/cgi-bin/frame?t=frame"},
+            timeout=30)
+        resp.raise_for_status()
+        payload = resp.json()
+    except (requests.RequestException, ValueError) as exc:
+        # 登录态失效时该接口常返回登录页 HTML，json() 会抛 ValueError
+        raise MpAuthError(f"switchacct（{name}）调用失败，登录态可能已失效：{exc}") from exc
+    ret = (payload.get("base_resp") or {}).get("ret")
     if ret != 0:
-        msg = {201501: "未授权使用切换账号能力，请退出后重新扫码登录"}.get(ret, f"ret={ret}")
-        raise MpError(f"switchacct（{name}）：{msg}")
+        msg = {201501: "未授权使用切换账号能力，请退出后重新扫码登录"}.get(ret, "")
+        raise MpError(f"switchacct（{name}）：ret={ret}{msg}")
     cred["cookie"] = "; ".join(f"{k}={v}" for k, v
                                in requests.utils.dict_from_cookiejar(session.cookies).items())
     refresh_token(cred)
@@ -207,16 +220,21 @@ def api_get(cgi: str, params: dict, cred: dict) -> dict:
     full.setdefault("lang", "zh_CN")
     full.setdefault("f", "json")
     full.setdefault("ajax", 1)
-    resp = requests.get(
-        f"https://mp.weixin.qq.com/cgi-bin/{cgi}",
-        params=full,
-        headers={
-            "User-Agent": UA,
-            "Referer": "https://mp.weixin.qq.com/cgi-bin/frame?t=frame",
-            "Cookie": cred["cookie"],
-        },
-        timeout=30,
-    )
+    try:
+        resp = requests.get(
+            f"https://mp.weixin.qq.com/cgi-bin/{cgi}",
+            params=full,
+            headers={
+                "User-Agent": UA,
+                "Referer": "https://mp.weixin.qq.com/cgi-bin/frame?t=frame",
+                "Cookie": cred["cookie"],
+            },
+            timeout=30,
+            proxies=NO_PROXY,
+        )
+    except requests.RequestException as exc:
+        # 网络不通（本地代理挂了等）按可跳过错误处理，绝不中断夜间定时同步
+        raise MpError(f"{cgi} 网络错误（本机直连失败）:{exc}") from exc
     resp.raise_for_status()
     try:
         data = resp.json()

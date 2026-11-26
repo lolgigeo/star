@@ -166,7 +166,7 @@ def resolve_short_link(url: str) -> str:
     if parsed.path.startswith("/s/") and not parsed.query:
         try:
             resp = requests.get(url, headers={"User-Agent": mp_list.UA},
-                                timeout=30, allow_redirects=True)
+                                timeout=30, allow_redirects=True, proxies=mp_list.NO_PROXY)
         except requests.RequestException as exc:
             log.warning("短链解析请求失败（%s）：%s", url, exc)
             return url
@@ -225,7 +225,8 @@ def candidates_from_mp() -> dict[str, dict]:
     """从公众号后台接口收集候选（凭据缺失或登录态过期时跳过，不中断同步）。"""
     try:
         rows = mp_list.fetch_all(MP_ACCOUNT)
-    except mp_list.MpError as exc:
+    except (mp_list.MpError, requests.RequestException, OSError) as exc:
+        # MP 源任何失败（凭据缺失/频控/登录态失效/网络不通）都只跳过本源，不中断同步
         log.warning("MP 数据源跳过：%s", exc)
         return {}
     found: dict[str, dict] = {}

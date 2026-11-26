@@ -99,6 +99,7 @@ class ImageStore:
     def __init__(self, images_root: Path, referer: str = "https://mp.weixin.qq.com/"):
         self.root = images_root
         self.session = requests.Session()
+        self.session.trust_env = False  # 微信图床必须本机直连，绕过系统/环境代理
         self.session.headers.update({
             "User-Agent": UA,
             "Referer": referer,
@@ -154,6 +155,7 @@ class WeChatFetcher:
 
     def __init__(self, images: ImageStore):
         self.session = requests.Session()
+        self.session.trust_env = False  # 微信正文页必须本机直连，绕过系统/环境代理
         self.session.headers.update({
             "User-Agent": UA,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
