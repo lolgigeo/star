@@ -33,12 +33,14 @@ from __future__ import annotations
 
 import argparse
 import base64
+import fcntl
 import json
 import logging
 import os
 import re
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import requests
@@ -97,6 +99,39 @@ def load_credentials() -> dict:
 def save_credentials(cred: dict) -> None:
     CRED_PATH.parent.mkdir(parents=True, exist_ok=True)
     CRED_PATH.write_text(json.dumps(cred, ensure_ascii=False, indent=2) + "\n")
+
+
+# ---------------- 跨进程互斥 ----------------
+# 多仓库共享同一份凭据（同一登录态）时，两个同步进程若并发跑，switchacct 会互相
+# 覆盖上下文、回存互相踩踏（2026-11-27 08:13 两仓库定时任务撞车实测）。用 flock
+# 锁在共享凭据目录里串行化；进程崩溃时内核自动释放锁，不会留死锁。
+
+LOCK_PATH = CRED_PATH.parent / ".mp_sync.lock"
+LOCK_TIMEOUT = 900  # 最多等 15 分钟（另一仓库抓多篇文章的情况）
+
+
+@contextmanager
+def sync_lock():
+    fh = open(LOCK_PATH, "w")
+    deadline = time.monotonic() + LOCK_TIMEOUT
+    while True:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            if time.monotonic() > deadline:
+                fh.close()
+                raise MpError(f"另一仓库的同步持有 MP 锁超过 {LOCK_TIMEOUT}s，本次跳过 MP 源")
+            time.sleep(5)
+    try:
+        fh.write(f"{os.getpid()}\n")
+        fh.flush()
+        yield
+    finally:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+        finally:
+            fh.close()
 
 
 # ---------------- 一份登录态管多个号：切换上下文 ----------------
@@ -164,6 +199,9 @@ def refresh_token(cred: dict) -> None:
 def switch_account(cred: dict, acc: dict) -> dict:
     """把会话上下文切到 acc 对应的公众号，更新并回存 cookie/token。"""
     name = acc.get("name") or "?"
+    # token 绑定当前上下文：cookie 被手动更新（换号/重新登录）后文件里的旧 token
+    # 属于旧上下文，直接拿去 switch 会 ret=200040，所以切换前先按 cookie 找回 token
+    refresh_token(cred)
     session = requests.Session()
     session.trust_env = False  # 强制直连，绕过系统/环境代理
     session.cookies.update(parse_cookie_header(cred["cookie"]))
@@ -324,11 +362,16 @@ def fetch_all(name_filter: str | None = None) -> list[tuple[str, dict]]:
 
     accounts 里标了 "own": true 的号走 appmsgpublish（自己号的发表记录，
     不受 list_ex 频控）；其余走 list_ex。一份登录态管多个号时，own 账号抓取前
-    会自动 switchacct 切换上下文。
+    会自动 switchacct 切换上下文；全程持有跨进程锁，多仓库并发时串行执行。
     name_filter：只拉指定名称的号（多仓库共享凭据时各仓库传自己的号，
     避免空拉别人的列表、也避免别的号失败连带中止本仓库的源）。
     登录态失效抛 MpAuthError（上层整体跳过 MP 源）；单个账号失败只告警继续。
     """
+    with sync_lock():
+        return _fetch_all_locked(name_filter)
+
+
+def _fetch_all_locked(name_filter: str | None = None) -> list[tuple[str, dict]]:
     cred = load_credentials()
     accounts = cred.get("accounts") or []
     if not accounts:
